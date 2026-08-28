@@ -1,26 +1,47 @@
-export async function onRequest(context) {
-  const url = new URL(context.request.url);
-  const code = url.searchParams.get("code") || "KOSPI";
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
 
-  try {
-    const data = await getMarketData(code);
-    return jsonResponse(data, 200);
-  } catch (err) {
-    return jsonResponse({ error: err.message }, 500);
-  }
-}
+    if (url.pathname.startsWith("/api/naver-market")) {
+      if (request.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "86400"
+          }
+        });
+      }
 
-export async function onRequestOptions() {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Max-Age": "86400"
+      const code = url.searchParams.get("code") || "KOSPI";
+
+      try {
+        const data = await getMarketData(code);
+        return new Response(JSON.stringify(data), {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type"
+          }
+        });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*"
+          }
+        });
+      }
     }
-  });
-}
+
+    return env.ASSETS ? env.ASSETS.fetch(request) : fetch(request);
+  }
+};
 
 async function getMarketData(code) {
   // 1. KOSPI
@@ -36,7 +57,6 @@ async function getMarketData(code) {
     const prevDiff = parseFloat(String(basic.compareToPreviousClosePrice).replace(/,/g, ""));
     const prevClose = currentVal - prevDiff;
 
-    // 가격 리스트 (시간 역순이므로 오래된 순으로 정렬)
     const reversed = [...prices].reverse();
     const rows = reversed.map((item) => {
       const val = parseFloat(String(item.closePrice).replace(/,/g, ""));
@@ -47,7 +67,6 @@ async function getMarketData(code) {
       };
     }).filter(r => !isNaN(r.value));
 
-    // 최신 현재가 추가
     if (rows.length === 0 || rows[rows.length - 1].value !== currentVal) {
       const now = new Date();
       const hh = String(now.getHours()).padStart(2, "0");
@@ -58,7 +77,7 @@ async function getMarketData(code) {
     return { rows, prevClose };
   }
 
-  // 2. NASDAQ (.IXIC / NAS@IXIC)
+  // 2. NASDAQ
   if (code === "NAS@IXIC" || code === ".IXIC" || code === "NASDAQ") {
     const [basicRes, priceRes] = await Promise.all([
       fetch("https://api.stock.naver.com/index/.IXIC/basic"),
@@ -91,7 +110,7 @@ async function getMarketData(code) {
     return { rows, prevClose };
   }
 
-  // 3. USD/KRW (FX_USDKRW)
+  // 3. USD/KRW
   if (code === "FX_USDKRW") {
     const priceRes = await fetch("https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/prices?pageSize=30&page=1");
     const prices = await priceRes.json();
@@ -115,17 +134,4 @@ async function getMarketData(code) {
   }
 
   throw new Error("지원하지 않는 종목 코드입니다.");
-}
-
-function jsonResponse(obj, status) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type"
-    }
-  });
 }
